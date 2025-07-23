@@ -15,7 +15,7 @@ pipeline {
 
         stage('Checkout') {
             steps {
-                git 'https://github.com/your-repo/your-java-project.git'
+                git 'https://github.com/Abhishek-bisht-tech/java-ci-demo.git'
             }
         }
 
