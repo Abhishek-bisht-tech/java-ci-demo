@@ -2,60 +2,57 @@ pipeline {
     agent any
 
     parameters {
-        booleanParam(name: 'SKIP_STABILITY_CHECK', defaultValue: false, description: 'Skip Code Stability Check')
-        booleanParam(name: 'SKIP_QUALITY_CHECK', defaultValue: false, description: 'Skip Code Quality Check')
-        booleanParam(name: 'SKIP_COVERAGE_CHECK', defaultValue: false, description: 'Skip Code Coverage Check')
+        booleanParam(name: 'SKIP_QUALITY', defaultValue: false, description: 'Skip Code Quality Analysis')
+        booleanParam(name: 'SKIP_COVERAGE', defaultValue: false, description: 'Skip Code Coverage Analysis')
+        booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip Stability Tests')
     }
 
     environment {
-        EMAIL_RECIPIENT = 'abhishekbisht321@gmail.com'
+        MAVEN_HOME = '/usr/share/maven'  // adjust based on your system
     }
 
     stages {
 
-        stage('Checkout Code') {
+        stage('Checkout') {
             steps {
-                checkout scm
+                git 'https://github.com/your-repo/your-java-project.git'
             }
         }
 
-        stage('Parallel Scans') {
+        stage('Parallel Checks') {
             parallel {
-                stage('Code Stability') {
-                    when {
-                        expression { return !params.SKIP_STABILITY_CHECK }
-                    }
+                stage('Code Stability (Tests)') {
+                    when { not { expression { params.SKIP_TESTS } } }
                     steps {
-                        echo 'Running unit tests for stability...'
-                        sh './gradlew test' // or mvn test
-                        junit '**/build/test-results/test/*.xml'
+                        sh 'mvn clean test'
                     }
                 }
 
                 stage('Code Quality Analysis') {
-                    when {
-                        expression { return !params.SKIP_QUALITY_CHECK }
-                    }
+                    when { not { expression { params.SKIP_QUALITY } } }
                     steps {
-                        echo 'Running code quality analysis...'
-                        sh './gradlew sonarqube' // assumes SonarQube config
+                        withSonarQubeEnv('MySonarQube') {
+                            sh 'mvn sonar:sonar'
+                        }
                     }
                 }
 
                 stage('Code Coverage Analysis') {
-                    when {
-                        expression { return !params.SKIP_COVERAGE_CHECK }
-                    }
+                    when { not { expression { params.SKIP_COVERAGE } } }
                     steps {
-                        echo 'Running code coverage analysis...'
-                        sh './gradlew jacocoTestReport'
-                        publishHTML(target: [
-                            reportName : 'Code Coverage',
-                            reportDir  : 'build/reports/jacoco/test/html',
-                            reportFiles: 'index.html'
-                        ])
+                        sh 'mvn clean test jacoco:report'
                     }
                 }
+            }
+        }
+
+        stage('Publish Reports') {
+            steps {
+                publishHTML(target: [
+                    reportDir: 'target/site/jacoco',
+                    reportFiles: 'index.html',
+                    reportName: 'JaCoCo Coverage Report'
+                ])
             }
         }
 
@@ -63,16 +60,11 @@ pipeline {
             steps {
                 script {
                     def userInput = input(
-                        message: 'Approve to publish artifacts?',
-                        ok: 'Yes, publish',
-                        parameters: [
-                            choice(name: 'Approve', choices: ['Yes', 'No'], description: 'Approval to publish?')
-                        ]
+                        message: "Do you want to proceed with artifact publishing?",
+                        parameters: [choice(choices: ['Yes', 'No'], description: 'Choose', name: 'Confirm')]
                     )
-
                     if (userInput == 'No') {
-                        currentBuild.result = 'ABORTED'
-                        error('Publication Denied')
+                        error "Artifact publishing was denied"
                     }
                 }
             }
@@ -80,33 +72,38 @@ pipeline {
 
         stage('Publish Artifacts') {
             steps {
-                echo 'Publishing artifacts...'
-                sh './gradlew assemble' // or mvn package
-                archiveArtifacts artifacts: '**/build/libs/*.jar', fingerprint: true
+                sh 'mvn clean install'
+                archiveArtifacts artifacts: '**/target/*.jar', fingerprint: true
             }
         }
     }
 
     post {
         success {
-            echo 'Pipeline completed successfully.'
-            slackSend channel: '#ci', message: "✅ Build ${env.JOB_NAME} #${env.BUILD_NUMBER} Succeeded!"
-            mail to: "${env.EMAIL_RECIPIENT}",
-                 subject: "Jenkins Build Successful: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                 body: "The build completed successfully. See details at ${env.BUILD_URL}"
-        }
+            mail to: 'abhishekbisht321@gmail.com',
+                 subject: '✅ Build Success: ${env.JOB_NAME} #${env.BUILD_NUMBER}',
+                 body: """\
+The Jenkins build was successful.
 
+Project: ${env.JOB_NAME}
+Build Number: ${env.BUILD_NUMBER}
+View here: ${env.BUILD_URL}
+"""
+
+            slackSend(channel: '#build-status', message: "✅ Build #${env.BUILD_NUMBER} succeeded for ${env.JOB_NAME}")
+        }
         failure {
-            echo 'Pipeline failed.'
-            slackSend channel: '#ci', message: "❌ Build ${env.JOB_NAME} #${env.BUILD_NUMBER} Failed!"
-            mail to: "${env.EMAIL_RECIPIENT}",
-                 subject: "Jenkins Build Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                 body: "The build failed. See details at ${env.BUILD_URL}"
-        }
+            mail to: 'abhishekbisht321@gmail.com',
+                 subject: '❌ Build Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}',
+                 body: """\
+The Jenkins build failed.
 
-        aborted {
-            echo 'Pipeline aborted by user.'
-            slackSend channel: '#ci', message: "⚠️ Build ${env.JOB_NAME} #${env.BUILD_NUMBER} Aborted!"
+Project: ${env.JOB_NAME}
+Build Number: ${env.BUILD_NUMBER}
+View logs: ${env.BUILD_URL}
+"""
+
+            slackSend(channel: '#build-status', message: "❌ Build #${env.BUILD_NUMBER} failed for ${env.JOB_NAME}")
         }
     }
 }
